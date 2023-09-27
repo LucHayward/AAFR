@@ -1,5 +1,5 @@
 numpy
-scipy==1.6.0
+scipy
 open3d
 matplotlib
 tqdm

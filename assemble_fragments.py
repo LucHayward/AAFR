@@ -42,6 +42,9 @@ def main(args):
         fr_ass.detect_breaking_curves()
         fr_ass.save_breaking_curves()
 
+        # print("!!!EARLY STOPPING!!!")
+        # return 2
+        #
         # 3.2) segmentation
         print('-' * print_line_length)
         fr_ass.segment_regions()

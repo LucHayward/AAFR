@@ -3,6 +3,8 @@ import random
 import os 
 import open3d as o3d
 import numpy as np
+from line_profiler import profile
+
 import helper
 from Fragment import FeatureLines
 from tqdm import tqdm
@@ -45,24 +47,69 @@ def dilate_border(my_obj,border,size):
         new_borders.extend(idx)
     return new_borders
 
+# @profile
+# def get_sides(Graph, borders):
+#     faces = []
+#     all_visited = set()
+#     borders = set(borders)
+#     from collections import deque
+#     nodes = deque(Graph.nodes)
+#     shortest_cycle_length = np.sqrt(len(borders))//5
+#     with tqdm(total=len(nodes)) as pbar:
+#         while len(nodes):
+#             random_point = nodes.popleft()
+#             while random_point in all_visited or random_point in borders:
+#                 if not len(nodes):
+#                     sorted_faces = sorted(faces,key = lambda key:key[0], reverse = True)
+#                     my_faces = []
+#                     for size,face in sorted_faces:
+#                         if size>shortest_cycle_length:
+#                             my_faces.append((size,face))
+#                     return my_faces
+#                 random_point = nodes.popleft()
+#
+#             queue = deque([random_point])
+#             visited = set()
+#             while len(queue):
+#                 point = queue.popleft()
+#                 if point not in visited and point not in borders:
+#                     visited.add(point)
+#                     all_visited.add(point)
+#                     neighbors = Graph.neighbors(point)
+#                     pbar.update(len(list(neighbors)))
+#                     for neighbor in neighbors:
+#                         all_visited.add(neighbor)
+#                         if neighbor not in borders:
+#                             queue.append(neighbor)
+#             #print(len(visited))
+#             faces.append((len(visited),visited))
+#         sorted_faces = sorted(faces,key = lambda key:key[0], reverse = True)
+#         my_faces = []
+#         for size,face  in sorted_faces:
+#             if size>shortest_cycle_length:
+#                 my_faces.append((size,face) )
+#         return my_faces
 
+# Something goes wrong when you use a deque here.
+@profile
 def get_sides(Graph, borders):
     faces = []
     all_visited = set()
+    borders = set(borders)
     nodes = list(Graph.nodes)
-    shortest_cycle_length = np.sqrt(len(borders))//5
+    shortest_cycle_length = np.sqrt(len(borders)) // 5
     with tqdm(total=len(nodes)) as pbar:
         while len(nodes):
-            random_point = nodes.pop(0)
+            random_point = nodes.pop(0)  # TODO pop(-1)
             while random_point in all_visited or random_point in borders:
                 if not len(nodes):
-                    sorted_faces = sorted(faces,key = lambda key:key[0], reverse = True)
+                    sorted_faces = sorted(faces, key=lambda key: key[0], reverse=True)
                     my_faces = []
-                    for size,face in sorted_faces:
-                        if size>shortest_cycle_length:
-                            my_faces.append((size,face))
+                    for size, face in sorted_faces:
+                        if size > shortest_cycle_length:
+                            my_faces.append((size, face))
                     return my_faces
-                random_point = nodes.pop(0)
+                random_point = nodes.pop(0)  # TODO pop(-1)
 
             queue = [random_point]
             visited = set()
@@ -77,63 +124,76 @@ def get_sides(Graph, borders):
                         all_visited.add(neighbor)
                         if neighbor not in borders:
                             queue.append(neighbor)
-            #print(len(visited))
-            faces.append((len(visited),visited))
-        sorted_faces = sorted(faces,key = lambda key:key[0], reverse = True)
+            # print(len(visited))
+            faces.append((len(visited), visited))
+        sorted_faces = sorted(faces, key=lambda key: key[0], reverse=True)
         my_faces = []
-        for size,face  in sorted_faces:
-            if size>shortest_cycle_length:
-                my_faces.append((size,face) )
+        for size, face in sorted_faces:
+            if size > shortest_cycle_length:
+                my_faces.append((size, face))
         return my_faces
 
-def knn_expand(Obj,my_borders,node_face,face_nodes,size):
+@profile
+def knn_expand(obj, my_borders, node_face, face_nodes, size):
+    # Compute radius based on KNN
+    tmp_tree = o3d.geometry.KDTreeFlann(obj.pcd)
+    points_array = np.asarray(obj.pcd.points)
+    distances = []
+    for point in points_array:
+        _, idx, _ = tmp_tree.search_knn_vector_3d(point, 100)
+        q_points = points_array[idx]
+        distances.append(np.mean(np.abs(q_points[1:] - point)))
+    radius = np.mean(distances)
 
-    points_u = []
-    tmp_tree = o3d.geometry.KDTreeFlann(Obj.pcd)
-    for i in range(len(Obj.pcd.points)):
-            point = Obj.pcd.points[i]
-            [k, idx, _] = tmp_tree.search_knn_vector_3d(point, 100)
-            q_points = np.asarray(Obj.pcd.points).take(idx,axis=0)
-            points_u.append(np.mean(np.abs(q_points[1:] - point)))
-    radius = np.mean(points_u)
-    #print("KNN Radius : ",radius)
-    borders = deepcopy(my_borders)
-    face_nodes_new = deepcopy(face_nodes)
-    tree = o3d.geometry.KDTreeFlann(Obj.pcd)
-    no_change = 0
-    while borders:
-        len_before = len(borders)
-
-        idx = borders.pop(0)
-        point = Obj.pcd.points[idx]
-        [k, q_idxs, _] = tree.search_knn_vector_3d(point, size)
-        #vote
-        my_faces = {}
-        for q_idx in q_idxs:
-            if q_idx not in node_face:
-                continue
-
-            if node_face[q_idx] not in my_faces:
-                my_faces[node_face[q_idx]] = 1
-            else:
-                my_faces[node_face[q_idx]] += 1
-
-        if len(my_faces)==0:
-            borders.append(idx)
-        else:
-            winner = max(my_faces, key=my_faces.get)
-            face_nodes_new[winner].add(idx)
-            node_face[idx] = winner
-
-        if len(borders) == len_before:
-            no_change += 1
-        else:
-            no_change = 0
-
-        if no_change >= len_before+10000000:
-            break
-    #print(len(borders))
-    return face_nodes_new
+# @profile
+# def knn_expand(Obj,my_borders,node_face,face_nodes,size):
+#
+#     points_u = []
+#     tmp_tree = o3d.geometry.KDTreeFlann(Obj.pcd)
+#     for i in range(len(Obj.pcd.points)):
+#             point = Obj.pcd.points[i]
+#             [k, idx, _] = tmp_tree.search_knn_vector_3d(point, 100)
+#             q_points = np.asarray(Obj.pcd.points).take(idx,axis=0)
+#             points_u.append(np.mean(np.abs(q_points[1:] - point)))
+#     radius = np.mean(points_u)
+#     print("KNN Radius : ",radius)
+#     borders = deepcopy(my_borders)
+#     face_nodes_new = deepcopy(face_nodes)
+#     tree = o3d.geometry.KDTreeFlann(Obj.pcd)
+#     no_change = 0
+#     while borders:
+#         len_before = len(borders)
+#
+#         idx = borders.pop(0)
+#         point = Obj.pcd.points[idx]
+#         [k, q_idxs, _] = tree.search_knn_vector_3d(point, size)
+#         #vote
+#         my_faces = {}
+#         for q_idx in q_idxs:
+#             if q_idx not in node_face:
+#                 continue
+#
+#             if node_face[q_idx] not in my_faces:
+#                 my_faces[node_face[q_idx]] = 1
+#             else:
+#                 my_faces[node_face[q_idx]] += 1
+#
+#         if len(my_faces)==0:
+#             borders.append(idx)
+#         else:
+#             winner = max(my_faces, key=my_faces.get)
+#             face_nodes_new[winner].add(idx)
+#             node_face[idx] = winner
+#
+#         if len(borders) == len_before:
+#             no_change += 1
+#         else:
+#             no_change = 0
+#
+#         if no_change >= len_before+10000000:
+#             break
+#     #print(len(borders))
+#     return face_nodes_new
 
 def find_dilattion_size(my_obj,border):
     tmp_Obj = copy(my_obj)
@@ -354,6 +414,7 @@ def write_breaking_curves(obj, borders_indices, output_dir, obj_name):
     o3d.io.write_point_cloud(os.path.join(output_dir, f'borders_{obj_name}.ply'), border_pcd)
     o3d.io.write_point_cloud(os.path.join(output_dir, f'inner_{obj_name}.ply'), inner_ppd)
 
+@profile
 def segment_regions(obj, borders_indices, isolated_islands_pruned_graph, mode="ALI"):   
     if mode == "ALI":
         seg_regions_indices = get_sides(isolated_islands_pruned_graph, borders_indices)
@@ -369,7 +430,7 @@ def segment_regions(obj, borders_indices, isolated_islands_pruned_graph, mode="A
         border_left_overs = left_overs+borders_indices
         print('Assigning border nodes..')
         expanded_faces = knn_expand(obj,border_left_overs,node_face,face_nodes,size=5)
-        #print("expanded")
+        print("expanded")
         seg_parts_array = []
         for f, expanded_face in enumerate(expanded_faces):
             mask = np.isin(np.arange(0, len(obj.pcd.points), 1).tolist(),[node for node in expanded_face])

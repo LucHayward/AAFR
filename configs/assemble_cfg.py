@@ -15,6 +15,7 @@ thre = 0.93
 N = 15
 variables_as_list =  [num_of_points, num_of_points, N, to, to, to, tb, tb, tb, dil, thre]
 
+# Output folder
 import os, pdb, json
 name = f'3dvr_{num_of_points}'
 output_dir = os.path.join('3dvr_results', name)
@@ -24,7 +25,8 @@ os.makedirs(output_dir, exist_ok=True)
 data_folder = 'data'
 data_list = []
 
-for category_folder in os.listdir(data_folder):
+# for category_folder in os.listdir(data_folder):
+for category_folder in ["DrinkBottle"]:
     cat_ff = os.path.join(data_folder, category_folder)
     for fracture_folder in os.listdir(cat_ff):
         objects_folder = os.path.join(cat_ff, fracture_folder, 'objects')
