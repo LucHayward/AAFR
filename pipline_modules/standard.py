@@ -91,7 +91,7 @@ def dilate_border(my_obj,border,size):
 #         return my_faces
 
 # Something goes wrong when you use a deque here.
-@profile
+# @profile
 def get_sides(Graph, borders):
     faces = []
     all_visited = set()
@@ -133,17 +133,72 @@ def get_sides(Graph, borders):
                 my_faces.append((size, face))
         return my_faces
 
+
+
 @profile
 def knn_expand(obj, my_borders, node_face, face_nodes, size):
+    """
+    Function to expand KNN borders.
+    """
+
     # Compute radius based on KNN
     tmp_tree = o3d.geometry.KDTreeFlann(obj.pcd)
     points_array = np.asarray(obj.pcd.points)
     distances = []
+    # Improvement: Use numpy array for points to speed up operations
     for point in points_array:
         _, idx, _ = tmp_tree.search_knn_vector_3d(point, 100)
         q_points = points_array[idx]
         distances.append(np.mean(np.abs(q_points[1:] - point)))
     radius = np.mean(distances)
+
+    # Initialize
+    # Improvement: Use deque for efficient popping from the front
+    from collections import deque
+    borders = deque(my_borders)
+
+    # Improvement: Avoid deep copy for better performance
+    face_nodes_new = face_nodes.copy()
+
+    tree = o3d.geometry.KDTreeFlann(obj.pcd)
+    no_change = 0
+
+    while borders:
+        len_before = len(borders)
+
+        # Improvement: Use deque's popleft for O(1) operation
+        idx = borders.popleft()
+
+        point = points_array[idx]
+        _, q_idxs, _ = tree.search_knn_vector_3d(point, size)
+
+        # Voting logic
+        my_faces = {}
+
+        # Improvement: Use dict.get() for more efficient dictionary updates
+        for q_idx in q_idxs:
+            if q_idx in node_face:
+                my_faces[node_face[q_idx]] = my_faces.get(node_face[q_idx], 0) + 1
+
+        # Improvement: Check dictionary emptiness directly
+        if my_faces:
+            winner = max(my_faces, key=my_faces.get)
+            face_nodes_new[winner].add(idx)
+            node_face[idx] = winner
+        else:
+            borders.append(idx)
+
+        # Check for convergence
+        if len(borders) == len_before:
+            no_change += 1
+        else:
+            no_change = 0
+
+        if no_change >= len_before + 10000000:
+            break
+
+    return face_nodes_new
+
 
 # @profile
 # def knn_expand(Obj,my_borders,node_face,face_nodes,size):
@@ -157,26 +212,24 @@ def knn_expand(obj, my_borders, node_face, face_nodes, size):
 #             points_u.append(np.mean(np.abs(q_points[1:] - point)))
 #     radius = np.mean(points_u)
 #     print("KNN Radius : ",radius)
+#
 #     borders = deepcopy(my_borders)
 #     face_nodes_new = deepcopy(face_nodes)
 #     tree = o3d.geometry.KDTreeFlann(Obj.pcd)
 #     no_change = 0
+#     pcd_points = np.asarray(Obj.pcd.points)
 #     while borders:
 #         len_before = len(borders)
 #
 #         idx = borders.pop(0)
-#         point = Obj.pcd.points[idx]
+#         point = pcd_points[idx]
 #         [k, q_idxs, _] = tree.search_knn_vector_3d(point, size)
 #         #vote
 #         my_faces = {}
+#         # Improvement: Use dict.get() for more efficient dictionary updates
 #         for q_idx in q_idxs:
-#             if q_idx not in node_face:
-#                 continue
-#
-#             if node_face[q_idx] not in my_faces:
-#                 my_faces[node_face[q_idx]] = 1
-#             else:
-#                 my_faces[node_face[q_idx]] += 1
+#             if q_idx in node_face:
+#                 my_faces[node_face[q_idx]] = my_faces.get(node_face[q_idx], 0) + 1
 #
 #         if len(my_faces)==0:
 #             borders.append(idx)
@@ -414,8 +467,7 @@ def write_breaking_curves(obj, borders_indices, output_dir, obj_name):
     o3d.io.write_point_cloud(os.path.join(output_dir, f'borders_{obj_name}.ply'), border_pcd)
     o3d.io.write_point_cloud(os.path.join(output_dir, f'inner_{obj_name}.ply'), inner_ppd)
 
-@profile
-def segment_regions(obj, borders_indices, isolated_islands_pruned_graph, mode="ALI"):   
+def segment_regions(obj, borders_indices, isolated_islands_pruned_graph, mode="ALI"):
     if mode == "ALI":
         seg_regions_indices = get_sides(isolated_islands_pruned_graph, borders_indices)
         node_face = {}
